@@ -1,0 +1,62 @@
+import pandas as pd
+import pgeocode
+import numpy as np
+cols = ['Q5', 'Q49', 'Q50']
+df = pd.read_csv("PRL YAS Final Raw Data.csv", usecols = cols)
+df_clean = df.dropna(subset=['Q5', 'Q49', 'Q50'])
+df_clean['Q5'] = df_clean['Q5'].astype(int)
+df_clean['Q5'] = df_clean['Q5'].astype(str)
+def zip_to_lat_lon(df, zip_column, country='US'):
+    if zip_column not in df.columns:
+        raise ValueError(f"Column '{zip_column}' not found in DataFrame.")
+    nomi = pgeocode.Nominatim(country)
+    latitudes, longitudes = [], []
+    for zip_code in df[zip_column]:
+        try:
+            # Ensure ZIP is string for lookup
+            zip_str = str(zip_code).strip()
+            location = nomi.query_postal_code(zip_str)
+            
+            if pd.notna(location.latitude) and pd.notna(location.longitude):
+                latitudes.append(location.latitude)
+                longitudes.append(location.longitude)
+            else:
+                latitudes.append(None)
+                longitudes.append(None)
+        except Exception:
+            latitudes.append(None)
+            longitudes.append(None)
+    df['Latitude'] = latitudes
+    df['Longitude'] = longitudes
+    return df
+df_clean = zip_to_lat_lon(df_clean, 'Q5')
+
+df_clean['food_insecure1'] = np.where((df_clean['Q49'] == "sometimes true") | (df_clean['Q49'] == "often true"), 1, 0)
+df_clean['food_insecure2'] = np.where((df_clean['Q50'] == "sometimes true") | (df_clean['Q50'] == "often true"), 1, 0)
+
+df_clean['foodIns'] = np.where((df_clean['food_insecure1'] == 0) & (df_clean['food_insecure2'] == 0), 0, 1)
+
+df_clean = df_clean.drop(columns=["Q49", "Q50", "food_insecure1", "food_insecure2"])
+df_clean['zipcode'] = df_clean['Q5']
+df_clean = df_clean.drop(columns=["Q5"])
+print(df_clean.head())
+import sklearn as sk
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import RepeatedStratifiedKFold
+from numpy import mean
+from numpy import std
+from sklearn.gaussian_process.kernels import RBF
+from sklearn.gaussian_process.kernels import DotProduct
+from sklearn.gaussian_process.kernels import Matern
+from sklearn.gaussian_process.kernels import RationalQuadratic
+from sklearn.gaussian_process.kernels import WhiteKernel
+from sklearn.model_selection import GridSearchCV
+from sklearn.linear_model import LogisticRegression
+cv = RepeatedStratifiedKFold(n_splits=10, n_repeats=3, random_state=1)
+df_clean = df_clean.dropna()
+X = df_clean[["Latitude", "Longitude"]].values
+y = df_clean["foodIns"].values
+model = GaussianProcessClassifier(kernel=1*RBF(length_scale =1.0,length_scale_bounds=(1e-2, 1e15)))
+scores = cross_val_score(model, X, y, scoring='accuracy', cv=cv, n_jobs=-1)
+print('Mean Accuracy: %.3f (%.3f)' % (mean(scores), std(scores)))
